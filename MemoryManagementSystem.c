@@ -22,12 +22,11 @@ typedef struct
 static int ceil_div(int a, int b) {return (a + b - 1) / b;}
 
 /*
-Method: userMemoryAllocation
 - Randomly generates processes until memory (100 pages) is full.
-- Each random number (units) represents 80MB, so process size = units * 80MB.
-- Pages needed = ceil(processSize / 160MB).
-- Allocated MB = pagesNeeded * 160MB.
-- Unused MB = allocatedMB - processSizeMB.
+- Each random number (units) represents 80MB, process size = units * 80MB.
+- Pages needed: ceil(processSize / 160MB).
+- Allocated MB: pagesNeeded * 160MB.
+- Unused MB: allocatedMB - processSizeMB.
 - Starting address begins at 2000 and increases by allocatedMB each process.
 */
 static int userMemoryAllocation(int memory[TOTAL_PAGES], ProcessRecord records[TOTAL_PAGES]) 
@@ -42,14 +41,14 @@ static int userMemoryAllocation(int memory[TOTAL_PAGES], ProcessRecord records[T
         int remainingPages = TOTAL_PAGES - nextFreePage;
 
         /*
-          We must pick units so it fits in remaining pages.
+          pick units so it fits in remaining pages
           pagesNeeded = ceil((units*80)/160) = ceil(units/2) = (units+1)/2 (integer math)
           Condition: (units+1)/2 <= remainingPages  => units <= 2*remainingPages - 1
         */
         int maxUnitsThatFit = 2 * remainingPages - 1;
         if (maxUnitsThatFit > MAX_UNITS) maxUnitsThatFit = MAX_UNITS;
 
-        // Safety (should never happen because remainingPages >= 1 => maxUnitsThatFit >= 1)
+        //safety (should never happen because remainingPages >= 1 => maxUnitsThatFit >= 1)
         if (maxUnitsThatFit < MIN_UNITS) break;
 
         int units = (rand() % maxUnitsThatFit) + MIN_UNITS;   // random in [1 .. maxUnitsThatFit]
@@ -59,17 +58,17 @@ static int userMemoryAllocation(int memory[TOTAL_PAGES], ProcessRecord records[T
         int allocatedMB = pagesNeeded * PAGE_SIZE_MB;
         int unusedMB = allocatedMB - processSizeMB;
 
-        // Fill memory pages with this processId
+        //fill memory pages with this processId
         for (int i = 0; i < pagesNeeded; i++) {memory[nextFreePage + i] = processId;}
 
-        // Record for summary report
+        //record for summary report
         records[recordCount].processId = processId;
         records[recordCount].startingAddress = nextStartAddress;
         records[recordCount].processSizeMB = processSizeMB;
         records[recordCount].unusedMB = unusedMB;
         recordCount++;
 
-        // Update for next process
+        //update for next process
         nextFreePage += pagesNeeded;
         nextStartAddress += allocatedMB;
         processId++;
@@ -114,9 +113,6 @@ int main(void)
 
     int count = userMemoryAllocation(memory, records);
     printSummaryReport(records, count);
-
-    // Optional: uncomment to display page-by-page allocation
-    // printMemoryMap(memory);
 
     return 0;
 }
