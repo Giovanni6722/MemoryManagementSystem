@@ -1,5 +1,11 @@
+<<<<<<< HEAD
+<<<<<<< HEAD
+=======
 Write a Memory Management simulator program. Upload your program to Github and submit your link.
 
+>>>>>>> 0d774cc (added readme)
+=======
+>>>>>>> c4016b9 (litterally just testing commits on my profile)
 Assume your computer has a memory size of 16GB and it is divided into 100 pages. Hence each page is a size of 160 MB. Your program will create an array of size 100 elements and you maintain the processor numberer in the array. You will then call the userMemoryAllocation method to create processes until all the elements of the array are occupied by process number. Before the program is terminated you will report the jobs/processes status in the memory in the following format. The process allocation starts from memory address 2000 upwards.
 
 Summary Report Format Example:
