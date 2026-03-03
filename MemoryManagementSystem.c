@@ -1,10 +1,8 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-//gcc -std=c11 -Wall -Wextra -O2 MemoryManagementSystem.c -o MemoryManagementSystem.exe
-//./MemoryManagementSystem.exe
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>   
+#include <sys/wait.h>  
 
 #define TOTAL_PAGES 100
 #define PAGE_SIZE_MB 160
@@ -13,247 +11,144 @@
 #define MAX_UNITS 30
 #define START_ADDRESS 2000
 
-typedef struct 
-{
-    int processId;
-    int startingAddress;
-    int processSizeMB;
-    int unusedMB;
-}   ProcessRecord;
-
 static int ceil_div(int a, int b) {return (a + b - 1) / b;}
 
-/*
-<<<<<<< HEAD
-- Randomly generates processes until memory (100 pages) is full.
-- Each random number (units) represents 80MB, process size = units * 80MB.
-- Pages needed: ceil(processSize / 160MB).
-- Allocated MB: pagesNeeded * 160MB.
-- Unused MB: allocatedMB - processSizeMB.
-- Starting address begins at 2000 and increases by allocatedMB each process.
-*/
-static int userMemoryAllocation(int memory[TOTAL_PAGES], ProcessRecord records[TOTAL_PAGES]) 
+static int read_full(int fd, void *buf, size_t n) 
+{
+    size_t got = 0;
+    char *p = (char*)buf;
+    while (got < n) {
+        ssize_t r = read(fd, p + got, n - got);
+        if (r <= 0) return -1;
+        got += (size_t)r;
+    }
+    return 0;
+}
+
+static int write_full(int fd, const void *buf, size_t n) 
+{
+    size_t sent = 0;
+    const char *p = (const char*)buf;
+    while (sent < n) 
+    {
+        ssize_t w = write(fd, p + sent, n - sent);
+        if (w <= 0) return -1;
+        sent += (size_t)w;
+    }
+    return 0;
+}
+
+static int userMemoryAllocation(int memory[TOTAL_PAGES], int procIdArr[TOTAL_PAGES], int startAddrArr[TOTAL_PAGES],
+                                int sizeMBArr[TOTAL_PAGES], int unusedMBArr[TOTAL_PAGES]) 
 {
     int nextFreePage = 0;
-    int nextStartAddress = START_ADDRESS;
+    int nextStartAddr = START_ADDRESS;
     int processId = 1;
-    int recordCount = 0;
+    int count = 0;
 
     while (nextFreePage < TOTAL_PAGES) 
     {
         int remainingPages = TOTAL_PAGES - nextFreePage;
 
-        /*
-          pick units so it fits in remaining pages
-          pagesNeeded = ceil((units*80)/160) = ceil(units/2) = (units+1)/2 (integer math)
-          Condition: (units+1)/2 <= remainingPages  => units <= 2*remainingPages - 1
-        */
+        // Calculate max units that can fit in remaining pages
         int maxUnitsThatFit = 2 * remainingPages - 1;
         if (maxUnitsThatFit > MAX_UNITS) maxUnitsThatFit = MAX_UNITS;
+        if (maxUnitsThatFit < MIN_UNITS) maxUnitsThatFit = MIN_UNITS; // safety check; should never happen
 
-        //safety (should never happen because remainingPages >= 1 => maxUnitsThatFit >= 1)
-        if (maxUnitsThatFit < MIN_UNITS) break;
+        int pipefd[2];
+        if (pipe(pipefd) != 0) 
+        {
+            perror("pipe");
+            exit(1);
+        }
 
-        int units = (rand() % maxUnitsThatFit) + MIN_UNITS;   // random in [1 .. maxUnitsThatFit]
+        pid_t pid = fork();
+        if (pid < 0) 
+        {
+            perror("fork");
+            exit(1);
+        }
+
+        if (pid == 0) 
+        {
+            close(pipefd[0]);
+
+            unsigned seed = (unsigned)(time(NULL) ^ (getpid() << 16));
+            srand(seed);
+
+            int units = (rand() % maxUnitsThatFit) + MIN_UNITS; // random units between 1 and maxUnitsThatFit
+            if (write_full(pipefd[1], &units, sizeof(units)) != 0) {
+                // In child, if write fails, just exit; parent will handle it
+                _exit(2);
+            }
+
+            close(pipefd[1]);
+            _exit(0);
+        }
+
+        close(pipefd[1]);
+
+        int units = 0;
+        if (read_full(pipefd[0], &units, sizeof(units)) != 0) 
+        {
+            perror("read");
+            exit(1);
+        }
+        close(pipefd[0]);
+
+        int status = 0;
+        waitpid(pid, &status, 0);
+
+        // Compute process + allocation
         int processSizeMB = units * UNIT_MB;
-
         int pagesNeeded = ceil_div(processSizeMB, PAGE_SIZE_MB);
         int allocatedMB = pagesNeeded * PAGE_SIZE_MB;
         int unusedMB = allocatedMB - processSizeMB;
 
-        //fill memory pages with this processId
-        for (int i = 0; i < pagesNeeded; i++) {memory[nextFreePage + i] = processId;}
+        // Allocate pages in memory array
+        for (int i = 0; i < pagesNeeded; i++) {
+            memory[nextFreePage + i] = processId;
+        }
 
-        //record for summary report
-        records[recordCount].processId = processId;
-        records[recordCount].startingAddress = nextStartAddress;
-        records[recordCount].processSizeMB = processSizeMB;
-        records[recordCount].unusedMB = unusedMB;
-        recordCount++;
+        // Record info (no structs; parallel arrays)
+        procIdArr[count]    = processId;
+        startAddrArr[count] = nextStartAddr;
+        sizeMBArr[count]    = processSizeMB;
+        unusedMBArr[count]  = unusedMB;
+        count++;
 
-        //update for next process
+        // Next process
         nextFreePage += pagesNeeded;
-        nextStartAddress += allocatedMB;
+        nextStartAddr += allocatedMB;
         processId++;
     }
 
-    return recordCount;
+    return count;
 }
 
-static void printSummaryReport(const ProcessRecord records[], int count) 
+static void printSummaryReport(const int procIdArr[], const int startAddrArr[], const int sizeMBArr[], const int unusedMBArr[], int count) 
 {
     printf("\nSummary Report\n");
     printf("Process Id\tStarting Memory Address\tSize of the Process (MB)\tUnused Space (MB)\n");
     printf("----------\t-----------------------\t------------------------\t----------------\n");
 
-    for (int i = 0; i < count; i++) 
-    {
-        printf("%10d\t%23d\t%24d\t%16d\n",
-               records[i].processId,
-               records[i].startingAddress,
-               records[i].processSizeMB,
-               records[i].unusedMB);
-    }
-    printf("\nTotal processes created: %d\n", count);
-}
+    for (int i = 0; i < count; i++)  {printf("%10d\t%23d\t%24d\t%16d\n",procIdArr[i], startAddrArr[i], sizeMBArr[i], unusedMBArr[i]);}
 
-static void printMemoryMap(const int memory[TOTAL_PAGES]) 
-{
-    printf("\nMemory Page Map (pageIndex:processId)\n");
-    for (int i = 0; i < TOTAL_PAGES; i++) 
-    {
-        printf("%2d:%d  ", i, memory[i]);
-        if ((i + 1) % 10 == 0) printf("\n");
-    }
+    printf("\nTotal processes created: %d\n", count);
+    printf("Memory filled: %d pages, %d MB/page\n", TOTAL_PAGES, PAGE_SIZE_MB);
 }
 
 int main(void) 
 {
     int memory[TOTAL_PAGES] = {0};
-    ProcessRecord records[TOTAL_PAGES];
 
-    srand((unsigned)time(NULL)); // random seed
+    int procIdArr[TOTAL_PAGES] = {0};
+    int startAddrArr[TOTAL_PAGES] = {0};
+    int sizeMBArr[TOTAL_PAGES] = {0};
+    int unusedMBArr[TOTAL_PAGES] = {0};
 
-    int count = userMemoryAllocation(memory, records);
-    printSummaryReport(records, count);
+    int count = userMemoryAllocation(memory, procIdArr, startAddrArr, sizeMBArr, unusedMBArr);
+    printSummaryReport(procIdArr, startAddrArr, sizeMBArr, unusedMBArr, count);
 
-=======
-=======
-//gcc -std=c11 -Wall -Wextra -O2 MemoryManagementSystem.c -o MemoryManagementSystem.exe
-//./MemoryManagementSystem.exe
-<<<<<<< HEAD
-
->>>>>>> fe295cb (Added exe)
-=======
->>>>>>> 40db4b1 (MemoryManageMentSys finished)
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
-
-#define TOTAL_PAGES 100
-#define PAGE_SIZE_MB 160
-#define UNIT_MB 80
-#define MIN_UNITS 1
-#define MAX_UNITS 30
-#define START_ADDRESS 2000
-
-typedef struct 
-{
-    int processId;
-    int startingAddress;
-    int processSizeMB;
-    int unusedMB;
-}   ProcessRecord;
-
-static int ceil_div(int a, int b) {return (a + b - 1) / b;}
-
-/*
-Method: userMemoryAllocation
-=======
->>>>>>> 0d774cc (added readme)
-- Randomly generates processes until memory (100 pages) is full.
-- Each random number (units) represents 80MB, process size = units * 80MB.
-- Pages needed: ceil(processSize / 160MB).
-- Allocated MB: pagesNeeded * 160MB.
-- Unused MB: allocatedMB - processSizeMB.
-- Starting address begins at 2000 and increases by allocatedMB each process.
-*/
-static int userMemoryAllocation(int memory[TOTAL_PAGES], ProcessRecord records[TOTAL_PAGES]) 
-{
-    int nextFreePage = 0;
-    int nextStartAddress = START_ADDRESS;
-    int processId = 1;
-    int recordCount = 0;
-
-    while (nextFreePage < TOTAL_PAGES) 
-    {
-        int remainingPages = TOTAL_PAGES - nextFreePage;
-
-        /*
-          pick units so it fits in remaining pages
-          pagesNeeded = ceil((units*80)/160) = ceil(units/2) = (units+1)/2 (integer math)
-          Condition: (units+1)/2 <= remainingPages  => units <= 2*remainingPages - 1
-        */
-        int maxUnitsThatFit = 2 * remainingPages - 1;
-        if (maxUnitsThatFit > MAX_UNITS) maxUnitsThatFit = MAX_UNITS;
-
-        //safety (should never happen because remainingPages >= 1 => maxUnitsThatFit >= 1)
-        if (maxUnitsThatFit < MIN_UNITS) break;
-
-        int units = (rand() % maxUnitsThatFit) + MIN_UNITS;   // random in [1 .. maxUnitsThatFit]
-        int processSizeMB = units * UNIT_MB;
-
-        int pagesNeeded = ceil_div(processSizeMB, PAGE_SIZE_MB);
-        int allocatedMB = pagesNeeded * PAGE_SIZE_MB;
-        int unusedMB = allocatedMB - processSizeMB;
-
-        //fill memory pages with this processId
-        for (int i = 0; i < pagesNeeded; i++) {memory[nextFreePage + i] = processId;}
-
-        //record for summary report
-        records[recordCount].processId = processId;
-        records[recordCount].startingAddress = nextStartAddress;
-        records[recordCount].processSizeMB = processSizeMB;
-        records[recordCount].unusedMB = unusedMB;
-        recordCount++;
-
-        //update for next process
-        nextFreePage += pagesNeeded;
-        nextStartAddress += allocatedMB;
-        processId++;
-    }
-
-    return recordCount;
-}
-
-static void printSummaryReport(const ProcessRecord records[], int count) 
-{
-    printf("\nSummary Report\n");
-    printf("Process Id\tStarting Memory Address\tSize of the Process (MB)\tUnused Space (MB)\n");
-    printf("----------\t-----------------------\t------------------------\t----------------\n");
-
-    for (int i = 0; i < count; i++) 
-    {
-        printf("%10d\t%23d\t%24d\t%16d\n",
-               records[i].processId,
-               records[i].startingAddress,
-               records[i].processSizeMB,
-               records[i].unusedMB);
-    }
-    printf("\nTotal processes created: %d\n", count);
-}
-
-static void printMemoryMap(const int memory[TOTAL_PAGES]) 
-{
-    printf("\nMemory Page Map (pageIndex:processId)\n");
-    for (int i = 0; i < TOTAL_PAGES; i++) 
-    {
-        printf("%2d:%d  ", i, memory[i]);
-        if ((i + 1) % 10 == 0) printf("\n");
-    }
-}
-
-int main(void) 
-{
-    int memory[TOTAL_PAGES] = {0};
-    ProcessRecord records[TOTAL_PAGES];
-
-    srand((unsigned)time(NULL)); // random seed
-
-    int count = userMemoryAllocation(memory, records);
-    printSummaryReport(records, count);
-
-<<<<<<< HEAD
-    // Optional: uncomment to display page-by-page allocation
-    // printMemoryMap(memory);
-
-<<<<<<< HEAD
-int main() {
-    printf("Hello, World!\n");
->>>>>>> fc15faf (init commit)
-=======
->>>>>>> 40db4b1 (MemoryManageMentSys finished)
-=======
->>>>>>> 0d774cc (added readme)
     return 0;
 }
